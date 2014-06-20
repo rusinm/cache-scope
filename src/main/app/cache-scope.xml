@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:spring="http://www.springframework.org/schema/beans"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:vm="http://www.mulesoft.org/schema/mule/vm"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      version="EE-3.5.0"
+      xsi:schemaLocation="http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd">
+ 
+    <configuration doc:name="Configuration">
+        <expression-language>
+            <global-functions>
+                def fibonacciRequest(n, cached)
+                {
+                    import org.mule.DefaultMuleMessage;
+                    import org.mule.RequestContext;
+ 
+                    request = new DefaultMuleMessage("Fibonacci: " + n, app.registry['_muleContext']);
+ 
+                    request.setOutboundProperty("n", Integer.toString(n));
+ 
+                    if (!cached)
+                    {
+                        request.setOutboundProperty("nocache", true);
+                    }
+ 
+                    RequestContext.getEventContext().sendEvent(request, "vm://fibonacci");
+                }
+            </global-functions>
+        </expression-language>
+    </configuration>
+    <spring:beans>
+        <spring:bean id="responseGenerator" class="com.mulesoft.mule.cache.FibonacciResponseGenerator"/>
+    </spring:beans>
+ 
+    <ee:object-store-caching-strategy name="Caching_Strategy" doc:name="Caching Strategy" keyGenerationExpression="#[message.inboundProperties['n']]" responseGenerator-ref="responseGenerator"/>
+ 
+    <vm:connector name="vmConnector" doc:name="VM">
+        <dispatcher-threading-profile maxThreadsActive="200"/>
+    </vm:connector>
+ 
+ 
+    <flow name="cache-exampleFlow1" doc:name="cache-exampleFlow1">
+        <http:inbound-endpoint exchange-pattern="request-response" host="localhost" port="8081" path="fibonacci" doc:name="HTTP"/>
+ <message-filter doc:name="Filter favicon">
+            <not-filter>
+                <wildcard-filter pattern="/favicon.ico" caseSensitive="true"/>
+            </not-filter>
+        </message-filter>
+ <choice doc:name="Choice">
+            <when expression="message.inboundProperties['n'] &lt; 20">
+                <flow-ref name="calculateFibonacci" doc:name="Flow Reference"/>
+ <expression-component doc:name="Expression">payload= "Fibonacci(" + message.inboundProperties['n'] + ") = " + payload +"\nCOST: " + message.outboundProperties['cost']</expression-component>
+            </when>
+            <otherwise>
+                <expression-component doc:name="Expression">payload= "ERROR: n must be less than 20"</expression-component>
+            </otherwise>
+        </choice>
+    </flow>
+ 
+    <flow name="calculateFibonacci" doc:name="calculateFibonacci">
+        <vm:inbound-endpoint path="fibonacci" exchange-pattern="request-response" doc:name="VM"/>
+ <ee:cache cachingStrategy-ref="Caching_Strategy"
+                  filterExpression="#[groovy:message.getInboundProperty('nocache') == null]" doc:name="Cache">
+            <logger level="INFO" message="#[payload]" doc:name="Logger"/>
+            <expression-component doc:name="Expression"><![CDATA[
+                n = message.inboundProperties['n'];
+                if (n < 2)
+                {
+                    payload = n;
+                    message.outboundProperties["cost"] = 1;
+                } else {
+                    boolean cached = message.inboundProperties['nocache'] == null;
+                    import org.mule.api.MuleMessage;
+                    MuleMessage fib1 = fibonacciRequest(n-1, cached);
+                    MuleMessage fib2 = fibonacciRequest(n-2, cached);
+ message.outboundProperties["cost"] = fib1.getInboundProperty("cost") + fib2.getInboundProperty("cost") + 1;
+                    payload = Long.parseLong(fib1.getPayload()) + Long.parseLong(fib2.getPayload());
+                }
+            ]]>
+            </expression-component>
+        </ee:cache>
+    </flow>
+</mule>
